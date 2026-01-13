@@ -2,14 +2,14 @@ library(shiny)
 library(GWalkR)
 library(bslib)
 
-ui <- page_sidebar(
+ui <- page_sidebar( #sidebarのフォーマットを利用
   title = "GWalkR",
-    sidebar = sidebar(
-      fileInput(
+    sidebar = sidebar( #サイドバー内のオブジェクト
+    fileInput(
         "file",
         "CSVファイルを選択",
         accept = ".csv"
-      ),
+    ),
     checkboxInput("header", "ヘッダーあり", TRUE),
     selectInput(
       "sep",
@@ -20,7 +20,12 @@ ui <- page_sidebar(
         "セミコロン" = ";"
       ),
       selected = ","
-    )
+    ),
+    fileInput(
+        "config",
+        "configファイルを選択",
+        accept = ".json"
+    ),
   ),
   gwalkrOutput("gwalkr_ui")
 )
@@ -42,7 +47,8 @@ server <- function(input, output, session) {
   # GWalkR 描画
   output$gwalkr_ui <- renderGwalkr(
     gwalkr(
-      data = data_reactive()
+      data = data_reactive(),
+      visConfigFile = input$config
     )
   )
 }
