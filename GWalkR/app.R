@@ -25,7 +25,7 @@ ui <- page_sidebar( #sidebarのフォーマットを利用
         "config",
         "configファイルを選択",
         accept = ".json"
-    ),
+    )
   ),
   gwalkrOutput("gwalkr_ui")
 )
