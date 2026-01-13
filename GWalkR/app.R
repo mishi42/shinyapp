@@ -31,7 +31,7 @@ server <- function(input, output, session) {
   data_reactive <- reactive({
     req(input$file)
     
-    read_delim(
+    readr::read_delim(
       input$file$datapath,
       delim = input$sep,
       col_names = input$header,
