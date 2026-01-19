@@ -55,6 +55,12 @@ ui <- page_navbar(
                   radioButtons("quote", "Quote",
                                choices = c(None = "", "Double Quote" = '"', "Single Quote" = "'"),
                                selected = '"'
+                  ),
+                  hr(),
+                  card(
+                    card_header("Session Management"),
+                    downloadButton("save_session", "Save Session (.rds)", class = "btn-outline-primary w-100 mb-2"),
+                    fileInput("load_session", "Load Session (.rds)", accept = ".rds")
                   )
                 )
               ),
@@ -77,6 +83,11 @@ ui <- page_navbar(
                 textAreaInput("user_msg", "Ask Ollama about the data:", rows = 3, placeholder = "e.g., What are the main trends in this data?"),
                 actionButton("send_msg", "Send", class = "btn-primary w-100 mb-2"),
                 actionButton("analyze_btn", "Analyze Trends", class = "btn-info w-100"),
+                hr(),
+                card(
+                  card_header("Export"),
+                  downloadButton("download_report", "Generate HTML Report", class = "btn-success w-100")
+                ),
                 hr(),
                 helpText("Ensure Ollama is running locally (http://127.0.0.1:11434)")
               ),
@@ -141,18 +152,51 @@ server <- function(input, output, session) {
   })
   
   # Reactive dataframe
-  df <- reactive({
+  df_val <- reactiveVal(NULL)
+  
+  observeEvent(input$file1, {
     req(input$file1)
-    read.csv(input$file1$datapath,
-             header = input$header,
-             sep = input$sep,
-             quote = input$quote
+    d <- read.csv(input$file1$datapath,
+                  header = input$header,
+                  sep = input$sep,
+                  quote = input$quote
+    )
+    df_val(d)
+  })
+  
+  # Session Management Logic
+  output$save_session <- downloadHandler(
+    filename = function() {
+      paste0("session-", Sys.Date(), ".rds")
+    },
+    content = function(file) {
+      session_data <- list(
+        data = df_val(),
+        chat = chat_data()
+      )
+      saveRDS(session_data, file)
+    }
+  )
+  
+  observeEvent(input$load_session, {
+    req(input$load_session)
+    tryCatch(
+      {
+        session_data <- readRDS(input$load_session$datapath)
+        if (!is.null(session_data$data)) df_val(session_data$data)
+        if (!is.null(session_data$chat)) chat_data(session_data$chat)
+        showNotification("Session loaded successfully!", type = "message")
+      },
+      error = function(e) {
+        showNotification(paste("Error loading session:", e$message), type = "error")
+      }
     )
   })
   
   # Data Table Preview
   output$contents <- renderDT({
-    datatable(df(),
+    req(df_val())
+    datatable(df_val(),
               options = list(
                 pageLength = 10, scrollX = TRUE,
                 dom = "tp", # table and pagination only
@@ -164,47 +208,59 @@ server <- function(input, output, session) {
   
   # DataExplorer Intro Plot
   output$intro_plot <- renderPlot({
-    req(df())
-    plot_intro(df())
+    req(df_val())
+    plot_intro(df_val())
   })
   
   # DataExplorer Distribution Plots (Numerical)
   output$dist_plot <- renderPlot({
-    req(df())
+    req(df_val())
     # Identify numeric columns
-    num_cols <- df() %>%
+    num_cols <- df_val() %>%
       select(where(is.numeric)) %>%
       names()
     if (length(num_cols) == 0) {
       return(NULL)
     }
-    plot_histogram(df(), ggtheme = theme_minimal(base_size = 14))
+    plot_histogram(df_val(), ggtheme = theme_minimal(base_size = 14))
   })
   
   # DataExplorer Bar Plots (Categorical)
   output$bar_plot <- renderPlot({
-    req(df())
+    req(df_val())
     # Identify categorical columns
-    cat_cols <- df() %>%
+    cat_cols <- df_val() %>%
       select(where(~ is.character(.) || is.factor(.))) %>%
       names()
     if (length(cat_cols) == 0) {
       return(NULL)
     }
-    plot_bar(df(), ggtheme = theme_minimal(base_size = 14))
+    plot_bar(df_val(), ggtheme = theme_minimal(base_size = 14))
   })
   
   # Missing Data Visualization
   output$missing_plot <- renderPlot({
-    req(df())
-    plot_missing(df(), ggtheme = theme_minimal(base_size = 14))
+    req(df_val())
+    plot_missing(df_val(), ggtheme = theme_minimal(base_size = 14))
   })
   
   # Statistical Summary
   output$summary <- renderPrint({
-    req(df())
-    skim(df())
+    req(df_val())
+    skim(df_val())
   })
+  
+  # HTML Report Generation
+  output$download_report <- downloadHandler(
+    filename = function() {
+      paste0("data-report-", Sys.Date(), ".html")
+    },
+    content = function(file) {
+      withProgress(message = "Generating HTML report...", value = 0, {
+        create_report(df_val(), output_file = file, output_dir = dirname(file))
+      })
+    }
+  )
   
   # Ollama Chat Logic
   chat_data <- reactiveVal(list(
@@ -237,8 +293,7 @@ server <- function(input, output, session) {
   call_ollama <- function(prompt, history) {
     url <- "http://127.0.0.1:11434/api/generate"
     body <- list(
-      #model = "llama3.2",
-      model = "gemma3:1b",
+      model = "llama3.2:latest",
       prompt = prompt,
       stream = FALSE
     )
@@ -248,11 +303,11 @@ server <- function(input, output, session) {
         if (status_code(res) == 200) {
           content(res)$response
         } else {
-          paste("Error: Ollama returned status", status_code(res))
+          paste("Error: Ollama returned status", status_code(res), "-", content(res, "text"))
         }
       },
       error = function(e) {
-        paste("Error: Could not connect to Ollama. Is it running on http://127.0.0.1:11434?", e$message)
+        paste("Error: Could not connect to Ollama. Status:", e$message)
       }
     )
   }
@@ -274,8 +329,8 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$analyze_btn, {
-    req(df())
-    d <- df()
+    req(df_val())
+    d <- df_val()
     intro <- capture.output(print(introduce(d)))
     summary_text <- capture.output(summary(d))
     
@@ -299,10 +354,11 @@ server <- function(input, output, session) {
   
   # GWalkR Interactive Plot
   output$gwalkr <- renderGwalkr({
-    req(df())
-    gwalkr(df())
+    req(df_val())
+    gwalkr(df_val())
   })
 }
 
 # Run App
 shinyApp(ui, server)
+
